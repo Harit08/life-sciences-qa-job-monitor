@@ -13,9 +13,10 @@ class MonitorTests(unittest.TestCase):
         self.assertTrue(monitor.STATE_CODES.search('Atlanta, GA'))
         self.assertFalse(bool(monitor.STATES.search('Toronto, Canada')))
     def test_roles(self):
-        self.assertTrue(monitor.ROLE.search('Machine Learning Engineer'))
-        self.assertTrue(monitor.ROLE.search('Data Engineer'))
-        self.assertTrue(monitor.EXCLUDE.search('Principal ML Engineer'))
+        self.assertTrue(monitor.ROLE.search('Quality Assurance Specialist'))
+        self.assertTrue(monitor.ROLE.search('Senior QA Specialist'))
+        self.assertTrue(monitor.EXCLUDE.search('Software QA Specialist'))
+        self.assertFalse(monitor.EXCLUDE.search('Senior Quality Assurance Specialist'))
     def test_state_schema(self):
         with TemporaryDirectory() as temp:
             old=monitor.DB

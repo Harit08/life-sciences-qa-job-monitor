@@ -1,0 +1,121 @@
+# Edit this file to adjust your search. No résumé or credentials are required.
+name: US Life Sciences Quality Assurance Specialists
+# On-site, hybrid and US-eligible remote roles are all included.
+# Sponsorship and work authorization are not filtered in either direction.
+max_experience_years: null
+first_run_lookback_days: 7
+include_fortune500: false
+
+# Both a function and a level must appear in the job title.
+title_functions:
+  - quality assurance
+  - QA
+  - quality systems
+  - quality compliance
+  - GMP compliance
+title_levels:
+  - specialist
+  - associate
+  - analyst
+excluded_title_terms:
+  - manager
+  - supervisor
+  - director
+  - vice president
+  - VP
+  - head of
+  - chief
+  - intern
+  - internship
+  - co op
+  - software
+  - SDET
+  - test automation
+  - QA automation
+  - game
+  - food
+  - construction
+
+# Require industry evidence so a generic software QA ad does not qualify.
+life_sciences_terms:
+  - pharmaceutical
+  - pharmaceuticals
+  - biopharmaceutical
+  - biopharma
+  - biotech
+  - biotechnology
+  - biologics
+  - medical device
+  - medical devices
+  - diagnostics
+  - clinical laboratory
+  - clinical laboratories
+  - cell therapy
+  - cell therapies
+  - gene therapy
+  - gene therapies
+  - life sciences
+  - life science
+  - GMP
+  - cGMP
+  - GxP
+  - GLP
+  - good clinical practice
+  - good manufacturing practice
+  - good manufacturing practices
+  - ISO 13485
+  - 21 CFR
+# Require regulated-quality duties as well as industry context. An insurer's
+# call-center QA ad mentioning a pharmaceutical client is not a pharma QA role.
+required_quality_terms:
+  - GMP
+  - cGMP
+  - GxP
+  - GLP
+  - good manufacturing practice
+  - good manufacturing practices
+  - good clinical practice
+  - good clinical practices
+  - ISO 13485
+  - 21 CFR
+  - CAPA
+  - corrective and preventive
+  - deviation
+  - deviations
+  - batch record
+  - batch records
+  - batch review
+  - batch release
+  - quality systems
+  - quality management system
+  - QMS
+  - document control
+  - change control
+  - regulatory inspection
+  - regulatory inspections
+  - clinical audit
+  - clinical audits
+quality_terms:
+  - CAPA
+  - deviation
+  - deviations
+  - batch record
+  - batch records
+  - batch release
+  - document control
+  - change control
+  - audit
+  - audits
+  - validation
+  - quality systems
+  - quality management system
+  - inspection
+
+himalayas_queries:
+  - quality assurance specialist
+  - QA specialist
+  - quality systems specialist
+  - quality compliance specialist
+smartrecruiters_queries:
+  - quality
+  - QA

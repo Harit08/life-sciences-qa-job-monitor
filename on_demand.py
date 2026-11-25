@@ -18,6 +18,7 @@ from email.utils import parsedate_to_datetime
 
 import yaml
 import monitor
+from matching import PROFILE
 from github_watch import fetch_watchlist
 from wide_sources import jobicy, nomads, simplify, applyguy
 from strict_jobs import TRUSTED, recent_employer_post, verify_application
@@ -43,11 +44,11 @@ def previous_checkpoint(db):
     row = db.execute("SELECT value FROM metadata WHERE key='manual_last_success'").fetchone()
     if row:
         return parse_iso(row[0]), "previous successful manual job search"
-    # Seamless migration from the old scanner's existing job state.
-    row = db.execute("SELECT MAX(last_seen) FROM jobs").fetchone()
-    if row and row[0]:
-        return parse_iso(row[0]), "most recent scan recorded by old monitor"
-    return None, "no previous scan (first run)"
+    # A separate QA database avoids inheriting the upstream user's search history.
+    days = int(PROFILE["first_run_lookback_days"])
+    if not 1 <= days <= 90:
+        raise ValueError("first_run_lookback_days must be between 1 and 90")
+    return NOW - timedelta(days=days), f"first run: {days}-day lookback"
 
 
 def identity(job, board):
@@ -133,14 +134,9 @@ def write_funnel(funnel,health):
     return items
 
 def write_results(rows, checkpoint, source_label, report, failed):
-    # Experience preference takes precedence over recency and relevance score.
-    tiers={"experience: 3–4 years (highest priority)":4,
-           "experience: 0–2 years (included)":3,
-           "experience: 5 years (lower priority)":2,
-           "experience not specified":1}
-    rows.sort(key=lambda j: (tiers.get(j.get("experience"),0),
-                             j["published_utc"], j["score"]), reverse=True)
-    # Round-robin the Summary across providers within each experience tier.
+    # Entry and senior specialists are both eligible; rank by relevance and time.
+    rows.sort(key=lambda j: (j["score"], j["published_utc"]), reverse=True)
+    # Round-robin the Summary across providers.
     # The CSV/JSON retain ALL qualifying results; do not artificially cap a feed.
     display_rows=[]
     remaining=list(rows)
@@ -169,12 +165,14 @@ def write_results(rows, checkpoint, source_label, report, failed):
     published=sum(x["freshness_class"]=="Employer timestamp" for x in rows)
     discovered=len(rows)-published
     lines=[
-        "# Jobs found since your last run", "",
+        "# US Life Sciences Quality Assurance jobs", "",
+        f"**Profile:** {PROFILE['name']}",
+        "**Scope:** Entry through senior specialists; all work styles; no sponsorship filter.",
         f"**Scan:** {monitor.iso(NOW)} UTC",
         f"**Previous checkpoint:** {monitor.iso(checkpoint) or 'None'} ({source_label})",
         f"**Results:** {len(rows)} source-timed results ({published} direct employer timestamps; {discovered} other time signals)",
         f"**Feeds:** {len(report)-len(failed)}/{len(report)} succeeded",
-        "**Strict interval:** A source timestamp or conservatively estimated tracker age must fall after the previous manual scan. New discovery by itself never qualifies.",
+        "**Time window:** A source timestamp must fall inside the interval shown above. The first run uses the configured lookback; later runs use the previous completed scan. New discovery by itself never qualifies.",
         "Himalayas UPDATE timestamps are not evidence of a newly published job. Approximate GitHub and third-party times are labeled as unverified.",
         "Application links or official source-status endpoints are checked where possible; blocked/uncertain links are omitted.",
         "",
@@ -236,14 +234,6 @@ def main():
     extra=Path("discovered_boards.yml")
     if extra.exists():
         boards += (yaml.safe_load(extra.read_text(encoding="utf-8")) or {}).get("boards", [])
-    boards += [
-        {"ats":"github_tracker","slug":"zapply","company":"Zapply GitHub tracker"},
-        {"ats":"github_tracker","slug":"ml_tracker","company":"ML Newgrad GitHub tracker"},
-        {"ats":"jobicy","slug":"usa","company":"Jobicy US remote"},
-        {"ats":"workingnomads","slug":"all","company":"Working Nomads"},
-        {"ats":"github_simplify","slug":"newgrad","company":"SimplifyJobs New Grad Positions"},
-        {"ats":"github_applyguy","slug":"newgrad2027","company":"ApplyGuy GitHub direct employer listings"},
-    ]
     dedup={(b["ats"],b["slug"]):b for b in boards}
     boards=list(dedup.values())
     if not boards:
@@ -260,7 +250,7 @@ def main():
             if board["ats"]=="github_tracker":
                 found=fetch_watchlist(board["slug"],monitor.SESSION)
             elif board["ats"]=="jobicy":
-                found=jobicy(monitor.SESSION,force_refresh=True)
+                found=jobicy(monitor.SESSION)
             elif board["ats"]=="workingnomads":
                 found=nomads(monitor.SESSION)
             elif board["ats"]=="github_simplify":
@@ -281,6 +271,8 @@ def main():
             for board,jobs,error in fetched]
     failed=[x for x in health if not x["ok"]]
     (OUTPUT / "feed_health.json").write_text(json.dumps(health,indent=2),encoding="utf-8")
+    if len(failed) == len(health):
+        raise RuntimeError("All job sources failed; the previous checkpoint was preserved. See feed_health.json.")
 
     db=monitor.connect()
     result=[]

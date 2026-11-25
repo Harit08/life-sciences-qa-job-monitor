@@ -4,6 +4,7 @@ These are supplementary discovery sources, not employer-direct ATS feeds.
 import re
 from urllib.parse import urlparse
 import requests
+from matching import PROFILE
 from bs4 import BeautifulSoup
 from datetime import datetime,timezone
 
@@ -30,7 +31,7 @@ def remoteok(session):
 def himalayas(session):
     # Search several broad categories and multiple pages, not just exact titles.
     seen=set()
-    for query in ('data','machine learning','AI','analytics','platform engineer','data science','MLOps'):
+    for query in PROFILE["himalayas_queries"]:
         for page in range(1,7):
             data=get(session,'https://himalayas.app/jobs/api/search',
                      {'q':query,'country':'US','sort':'recent','page':page})

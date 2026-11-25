@@ -1,5 +1,9 @@
 __pycache__/
+.venv/
 *.pyc
 .env
 validation_report.json
 last_run.json
+job_results/
+career_discovery_report.json
+career_discovery_review_queue.json

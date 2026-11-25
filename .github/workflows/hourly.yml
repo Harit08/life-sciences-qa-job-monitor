@@ -1,16 +1,16 @@
-name: Find AI/Data jobs since my last run
+name: Find US Quality Assurance Specialist jobs
 on:
   workflow_dispatch:
     inputs:
       discover_career_pages:
-        description: 'Discover AI companies + Fortune 500 (2026) public career feeds before searching'
+        description: 'Revalidate or discover public life-sciences employer feeds before searching'
         type: boolean
         required: false
-        default: true
+        default: false
 permissions:
   contents: write
 concurrency:
-  group: manual-job-search
+  group: qa-specialist-job-search
   cancel-in-progress: false
 jobs:
   find-jobs:
@@ -28,7 +28,6 @@ jobs:
         run: python -m pip install -r requirements.txt
       - name: Automated tests
         id: tests
-        continue-on-error: true
         run: python -m unittest discover -s tests -v
       - name: Discover more company career feeds (optional)
         id: discover
@@ -43,22 +42,22 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: jobs-since-last-run-${{ github.run_id }}
+          name: qa-specialist-jobs-${{ github.run_id }}
           path: |
             job_results/
             career_discovery_report.json
             career_discovery_review_queue.json
           if-no-files-found: warn
       - name: Save scan history
-        if: always()
+        if: steps.collect.outcome == 'success' && github.ref == 'refs/heads/main'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -f jobs.sqlite3 ]; then git add -f jobs.sqlite3; fi
+          if [ -f qa_jobs.sqlite3 ]; then git add -f qa_jobs.sqlite3; fi
           if [ -f discovered_boards.yml ]; then git add -f discovered_boards.yml; fi
           if [ -f provider_cache/jobicy.json ]; then git add -f provider_cache/jobicy.json; fi
           if ! git diff --cached --quiet; then
-            git commit -m "Save manual job search history [skip ci]"
+            git commit -m "Save QA specialist job search history [skip ci]"
             git pull --rebase
             git push
           fi

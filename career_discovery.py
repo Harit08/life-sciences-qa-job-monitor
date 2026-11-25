@@ -17,6 +17,7 @@ import yaml
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from fortune500_registry import load_fortune500, SOURCE as FORTUNE_SOURCE, CREDIT as FORTUNE_CREDIT
+from matching import PROFILE
 
 ALLOWED = {
     "boards.greenhouse.io":"greenhouse",
@@ -207,8 +208,9 @@ def main():
     companies=(yaml.safe_load(registry.read_text(encoding="utf-8")) or {}).get("companies",[])
     if not isinstance(companies,list):
         raise ValueError("companies must be a list")
+    fortune_enabled=bool(PROFILE.get("include_fortune500", False))
     try:
-        fortune=load_fortune500()
+        fortune=load_fortune500() if fortune_enabled else []
         fortune_error=None
     except (requests.RequestException,ValueError,UnicodeError) as exc:
         fortune=[]
@@ -218,7 +220,7 @@ def main():
     # Preserve missing-domain Fortune records as explicit unresolved entries.
     additional=[item for item in fortune if not item.get("url") or urlparse(item["url"]).hostname not in registered]
     missing_domains=[item for item in fortune if not item.get("url")]
-    missing_ranks=missing_fortune_ranks(fortune)
+    missing_ranks=missing_fortune_ranks(fortune) if fortune_enabled else []
     all_companies=companies+additional
     with ThreadPoolExecutor(max_workers=16) as pool:
         results=list(pool.map(inspect_page,all_companies[:800]))
@@ -238,7 +240,8 @@ def main():
         if board.get("ats") in ALLOWED.values() and SLUG.fullmatch(str(board.get("slug") or "")):
             confirmed.setdefault((board["ats"],board["slug"]),board)
     output.write_text(yaml.safe_dump({"boards":list(confirmed.values())},sort_keys=False),encoding="utf-8")
-    summary={"configured_pages":len(companies),"fortune500_year":2026,"fortune500_source":FORTUNE_SOURCE,
+    summary={"configured_pages":len(companies),"fortune500_enabled":fortune_enabled,
+             "fortune500_year":2026,"fortune500_source":FORTUNE_SOURCE,
              "fortune500_credit":FORTUNE_CREDIT,"fortune500_loaded":len(fortune),
              "fortune500_error":fortune_error,"fortune500_added":len(additional),
              "fortune500_domain_unresolved":len(missing_domains),
@@ -260,7 +263,8 @@ def main():
     Path("career_discovery_review_queue.json").write_text(
         json.dumps({"companies":summary["review_queue"],"missing_fortune_ranks":summary["missing_rank_review"]},indent=2),
         encoding="utf-8")
-    print("Fortune roster: %s/500 distinct ranks; %s missing ranks; %s missing/invalid domains" % (len(fortune),len(missing_ranks),len(missing_domains)))
+    if fortune_enabled:
+        print("Fortune roster: %s/500 distinct ranks; %s missing ranks; %s missing/invalid domains" % (len(fortune),len(missing_ranks),len(missing_domains)))
     print("Career discovery: %s pages checked; %s verified ATS feeds found; %s total known; %s failed" %
           (len(report),newly_verified,len(confirmed),summary["failed_pages"]))
     summary_file=os.getenv("GITHUB_STEP_SUMMARY")
@@ -268,9 +272,10 @@ def main():
         with open(summary_file,"a",encoding="utf-8") as handle:
             handle.write("\n### Employer career-page discovery\n\n")
             handle.write(f"- Candidate employer pages checked: **{len(report)}**\n")
-            handle.write(f"- Fortune 500 roster entries loaded: **{len(fortune)}/500**\n")
-            handle.write(f"- Fortune 500 entries with no usable official homepage: **{len(missing_domains)}**\n")
-            handle.write(f"- Fortune ranks missing from source: **{missing_ranks}**\n")
+            if fortune_enabled:
+                handle.write(f"- Fortune 500 roster entries loaded: **{len(fortune)}/500**\n")
+                handle.write(f"- Fortune 500 entries with no usable official homepage: **{len(missing_domains)}**\n")
+                handle.write(f"- Fortune ranks missing from source: **{missing_ranks}**\n")
             handle.write(f"- Public ATS feeds validated this run: **{newly_verified}**\n")
             handle.write(f"- Validated feeds retained in registry: **{len(confirmed)}**\n")
             handle.write(f"- Pages without visible public ATS: **{summary['no_public_ats_found']}**\n")

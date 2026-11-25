@@ -1,10 +1,47 @@
 import unittest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import Mock
+from unittest.mock import patch
+from tempfile import TemporaryDirectory
+from pathlib import Path
+import on_demand
+import monitor
 from on_demand import assess_new, source_time, safe_link, NOW, prefer_employer_sources
 from strict_jobs import recent_employer_post, verify_application
 
 class OnDemandTests(unittest.TestCase):
+    def test_first_search_uses_lookback_and_next_search_uses_checkpoint(self):
+        with TemporaryDirectory() as temp, patch.object(monitor, "DB", str(Path(temp) / "qa.sqlite3")):
+            db = monitor.connect()
+            checkpoint, label = on_demand.previous_checkpoint(db)
+            self.assertEqual(checkpoint, NOW - timedelta(days=7))
+            self.assertIn("first run", label)
+            saved = NOW - timedelta(hours=3)
+            db.execute("INSERT INTO metadata VALUES('manual_last_success', ?)", (monitor.iso(saved),))
+            db.commit()
+            checkpoint, label = on_demand.previous_checkpoint(db)
+            self.assertEqual(checkpoint, saved.replace(microsecond=0))
+            self.assertIn("previous successful", label)
+            db.close()
+
+    def test_all_failed_feeds_preserve_checkpoint(self):
+        with TemporaryDirectory() as temp, patch.object(monitor, "DB", str(Path(temp) / "qa.sqlite3")):
+            db = monitor.connect()
+            saved = monitor.iso(NOW - timedelta(hours=4))
+            db.execute("INSERT INTO metadata VALUES('manual_last_success', ?)", (saved,))
+            db.commit()
+            db.close()
+            board = {"ats": "greenhouse", "slug": "example", "company": "Example"}
+            with patch.object(on_demand, "OUTPUT", Path(temp)), \
+                 patch.object(on_demand.yaml, "safe_load", return_value={"boards": [board]}), \
+                 patch.object(monitor, "fetch", side_effect=RuntimeError("feed unavailable")), \
+                 patch.object(on_demand.logging, "exception"):
+                with self.assertRaisesRegex(RuntimeError, "checkpoint was preserved"):
+                    on_demand.main()
+            db = monitor.connect()
+            self.assertEqual(db.execute("SELECT value FROM metadata WHERE key='manual_last_success'").fetchone()[0], saved)
+            db.close()
+
     def test_recent_employer_post_since_checkpoint(self):
         checkpoint=NOW-timedelta(hours=12)
         recent=NOW-timedelta(hours=1)

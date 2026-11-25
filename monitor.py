@@ -8,20 +8,21 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import requests, yaml
 from bs4 import BeautifulSoup
-from matching import assess, us_eligible
+from matching import assess, us_eligible, target_title, PROFILE, FUNCTION, EXCLUDED_TITLE
 from extra_sources import remoteok, himalayas, arbeitnow
+from wide_sources import jobicy, nomads
 from freshness import published_last_hour, timestamp_class
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
 NOW = datetime.now(timezone.utc)
-DB = os.getenv('DB_PATH', 'jobs.sqlite3')
+DB = os.getenv('DB_PATH', 'qa_jobs.sqlite3')
 UA = {'User-Agent': 'PersonalJobMonitor/1.0 (low-frequency public ATS feed reader)', 'Accept': 'application/json'}
-ROLE = re.compile(r'\b(?:data engineer|machine learning engineer|ml engineer|ai[ /-]?ml engineer|applied ai engineer|llm engineer|generative ai engineer|genai engineer)\b', re.I)
+ROLE = FUNCTION
 EXPERIENCE = re.compile(r'(?<!\d)(\d{1,2})\s*(?:\+|(?:-|–|to)\s*\d{1,2})?\s*(?:years?|yrs?)\s*(?:of\s+)?(?:relevant\s+|professional\s+|industry\s+)?experience', re.I)
 EXPERIENCE_BEFORE = re.compile(r'(?<!\d)(\d{1,2})\s*(?:\+|(?:-|–|to)\s*\d{1,2})?\s*(?:years?|yrs?)\b', re.I)
 STATES = re.compile(r'\b(?:USA|U\.S\.|United States|US Remote|Remote - US|Remote, US|Remote \(US\)|Remote \(USA\)|Remote \(United States\)|Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming|District of Columbia|Albuquerque|Atlanta|Austin|Baltimore|Boston|Charlotte|Chicago|Cincinnati|Cleveland|Columbus|Dallas|Denver|Detroit|Houston|Indianapolis|Jacksonville|Kansas City|Las Vegas|Los Angeles|Miami|Minneapolis|Nashville|New Orleans|New York City|Orlando|Philadelphia|Phoenix|Pittsburgh|Portland|Raleigh|Sacramento|Salt Lake City|San Antonio|San Diego|San Francisco|San Jose|Seattle|St\. Louis|Tampa|Washington DC)\b', re.I)
 STATE_CODES = re.compile(r',\s*(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MS|MN|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)\b')
-EXCLUDE = re.compile(r'\b(?:intern|internship|co-op|new grad|staff|principal|director|vp|head of|architect|manager|recruiter|solutions engineer)\b', re.I)
+EXCLUDE = EXCLUDED_TITLE
 
 def plain(s):
     return BeautifulSoup(html.unescape(s or ''), 'html.parser').get_text(' ', strip=True)
@@ -62,50 +63,59 @@ def fetch(board):
             country = (j.get('address') or {}).get('postalAddress',{}).get('addressCountry')
             yield dict(company=company, ats=ats, id=str(j.get('id') or j.get('jobUrl') or j['title']), title=j['title'], location=', '.join(filter(None,locs)), description=plain(j.get('descriptionPlain') or j.get('descriptionHtml')), url=j.get('applyUrl') or j.get('jobUrl',''), published=dateparse(j.get('publishedAt')), updated=None, country=country)
     elif ats == 'smartrecruiters':
-        # Public list is metadata only: fetch details for potentially relevant titles.
-        # Hard cap avoids hundreds of unnecessary detail API calls per employer.
-        offset=0
-        detail_count=0
-        while offset < 200 and detail_count < 80:
-            data=get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings',
-                     {'limit':100,'offset':offset})
-            jobs=data.get('content')
-            if not isinstance(jobs,list):
-                raise ValueError('Malformed SmartRecruiters feed')
-            for j in jobs:
-                title=j.get('name') or ''
-                if not (assess(title, '')[0] or re.search(r'\b(?:software|platform|research|applied|infrastructure|backend)\b',title,re.I)):
-                    continue
-                posting_id=j.get('id')
-                if not posting_id or detail_count>=80:
+        # Query QA terms, then paginate matching US ads. The first 200 unfiltered
+        # jobs at a large pharma employer can contain no relevant openings.
+        seen = set()
+        detail_count = 0
+        for query in PROFILE["smartrecruiters_queries"]:
+            offset = 0
+            while offset < 2000 and detail_count < 200:
+                data = get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings',
+                           {'limit': 100, 'offset': offset, 'q': query, 'country': 'us'})
+                jobs = data.get('content')
+                if not isinstance(jobs, list):
+                    raise ValueError('Malformed SmartRecruiters feed')
+                for j in jobs:
+                    title = j.get('name') or ''
+                    posting_id = j.get('id')
+                    if not posting_id or posting_id in seen or not target_title(title):
+                        continue
+                    seen.add(posting_id)
+                    if detail_count >= 200:
+                        break
+                    detail_count += 1
+                    # Do not silently mark this feed healthy if a relevant detail fails.
+                    detail = get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings/{posting_id}')
+                    sections = (detail.get('jobAd') or {}).get('sections') or {}
+                    description = plain(' '.join(str(section.get('text') or '')
+                        for section in sections.values() if isinstance(section, dict)))
+                    if not description:
+                        description = plain(detail.get('description') or '')
+                    location_data = detail.get('location') or j.get('location') or {}
+                    location = ', '.join(str(location_data.get(k) or '')
+                        for k in ('city', 'region', 'country') if location_data.get(k))
+                    url = detail.get('applyUrl') or detail.get('postingUrl') or ''
+                    if not url.startswith('https://'):
+                        continue
+                    yield dict(company=company, ats=ats, id=str(posting_id),
+                        title=title, location=location, description=description, url=url,
+                        published=dateparse(detail.get('releasedDate')),
+                        updated=None, country=location_data.get('country'))
+                if len(jobs) < 100:
                     break
-                detail_count+=1
-                try:
-                    detail=get(f'https://api.smartrecruiters.com/v1/companies/{slug}/postings/{posting_id}')
-                except (requests.RequestException, ValueError, KeyError):
-                    logging.warning('Could not fetch SmartRecruiters detail %s/%s',slug,posting_id)
-                    continue
-                sections=(detail.get('jobAd') or {}).get('sections') or {}
-                description=plain(' '.join(str(section.get('text') or '') for section in sections.values() if isinstance(section,dict)))
-                if not description:
-                    description=plain(detail.get('description') or '')
-                location_data=detail.get('location') or j.get('location') or {}
-                location=', '.join(str(location_data.get(k) or '') for k in ('city','region','country') if location_data.get(k))
-                url=detail.get('applyUrl') or detail.get('postingUrl') or ''
-                if not url.startswith('https://'):
-                    continue
-                yield dict(company=company,ats=ats,id=str(posting_id),title=title,location=location,
-                    description=description,url=url,published=dateparse(detail.get('releasedDate')),
-                    updated=None,country=location_data.get('country'))
-            if len(jobs)<100:
-                break
-            offset+=100
+                offset += 100
+            if offset >= 2000 or detail_count >= 200:
+                raise RuntimeError('SmartRecruiters safety limit reached; narrow the configured search terms')
     elif ats == 'remoteok':
         yield from remoteok(SESSION)
     elif ats == 'himalayas':
         yield from himalayas(SESSION)
     elif ats == 'arbeitnow':
         yield from arbeitnow(SESSION)
+    elif ats == 'jobicy':
+        yield from jobicy(SESSION)
+    elif ats == 'workingnomads':
+        yield from nomads(SESSION)
     else: raise ValueError(f'Unsupported ATS: {ats}')
 
 def eligible(j):
@@ -130,7 +140,7 @@ def send_email(jobs):
         raise RuntimeError('Missing SMTP_HOST, SMTP_USER, SMTP_PASSWORD or ALERT_TO; unsent matches retained')
     msg = EmailMessage()
     msg['From'], msg['To'] = user, recipient
-    msg['Subject'] = f'{len(jobs)} AI/Data jobs published in the last 60 minutes'
+    msg['Subject'] = f'{len(jobs)} Life Sciences QA jobs published in the last 60 minutes'
     body = ['Employer-reported publication/release timestamps within the 60 minutes before the scan.', 'Ashby timestamps can represent republications rather than first-ever publication.', 'Listings may already be on LinkedIn or other boards.', '']
     for j in jobs:
         body += [f"{j['title']} — {j['company']}",f"Location: {j['location']}",f"First seen (UTC): {j['first_seen']}",f"Employer published (UTC): {j['published'] or 'Unavailable'}",f"Timestamp basis: {j['freshness']}",f"Relevance score: {j.get('score','?')} — {j.get('relevance','')}",f"Source: {j.get('source') or j['ats']}",f"Link: {j['url']}",'']
@@ -156,7 +166,7 @@ def main():
     discovered=Path('discovered_boards.yml')
     if discovered.exists():
         boards += (yaml.safe_load(discovered.read_text(encoding='utf-8')) or {}).get('boards',[])
-    dedup={(b['ats'],b['slug']):b for b in boards if b.get('ats') in ('greenhouse','lever','ashby','smartrecruiters','remoteok','himalayas','arbeitnow')}
+    dedup={(b['ats'],b['slug']):b for b in boards if b.get('ats') in ('greenhouse','lever','ashby','smartrecruiters','remoteok','himalayas','arbeitnow','jobicy','workingnomads')}
     boards=list(dedup.values())
     if not boards: raise RuntimeError('No configured boards')
     def check(board):
