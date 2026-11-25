@@ -1,2 +1,37 @@
-# Additional employer feeds are written here by optional career discovery.
-boards: []
+boards:
+- ats: greenhouse
+  slug: genezenlabs
+  company: Genezen
+- ats: greenhouse
+  slug: prokidney
+  company: ProKidney
+- ats: greenhouse
+  slug: legendcareers
+  company: Legend Biotech
+- ats: greenhouse
+  slug: beamtherapeutics
+  company: Beam Therapeutics
+- ats: greenhouse
+  slug: primemedicine
+  company: Prime Medicine
+- ats: greenhouse
+  slug: interpath
+  company: Interpath Laboratory
+- ats: lever
+  slug: orcabiosystems
+  company: Orca Bio
+- ats: lever
+  slug: egenesisbio
+  company: eGenesis
+- ats: smartrecruiters
+  slug: AbbVie
+  company: AbbVie
+- ats: smartrecruiters
+  slug: SGS
+  company: SGS
+- ats: smartrecruiters
+  slug: LGCGroup
+  company: LGC Group
+- ats: smartrecruiters
+  slug: Eurofins
+  company: Eurofins
